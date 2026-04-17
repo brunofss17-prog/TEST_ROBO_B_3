@@ -924,17 +924,20 @@ _TG_TOKEN   = os.environ.get("TG_TOKEN", "")
 _TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 
 def cfg_load():
+    cfg = {}
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # garante que todas as chaves existem
-            for k, v in CONFIG_DEFAULT.items():
-                data.setdefault(k, v)
-            return data
+                cfg = json.load(f)
         except Exception:
             pass
-    return dict(CONFIG_DEFAULT)
+    for k, v in CONFIG_DEFAULT.items():
+        cfg.setdefault(k, v)
+    if os.environ.get("TG_TOKEN"):
+        cfg["tg_token"] = os.environ.get("TG_TOKEN")
+    if os.environ.get("TG_CHAT_ID"):
+        cfg["tg_chat_id"] = os.environ.get("TG_CHAT_ID")
+    return cfg
 
 def cfg_save(data):
     try:
