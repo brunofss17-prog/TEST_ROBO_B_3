@@ -1130,7 +1130,7 @@ def monitor_get_config():
         safe["tg_token_preview"] = t[:8] + "..." + t[-4:] if len(t) > 12 else "***"
     return jsonify(safe)
 
-@app.route("/monitor/config", methods=["POST"])
+@app.route("/monitor/config", methods=["GET", "POST"])
 def monitor_set_config():
     data = request.json or {}
     cfg  = cfg_load()
@@ -1142,13 +1142,13 @@ def monitor_set_config():
     cfg_save(cfg)
     return jsonify({"ok": True})
 
-@app.route("/monitor/teste_telegram", methods=["POST"])
+@app.route("/monitor/teste_telegram", methods=["GET", "POST"])
 def monitor_teste_telegram():
     cfg = cfg_load()
     ok  = tg_test(cfg["tg_token"], cfg["tg_chat_id"])
     return jsonify({"ok": ok, "msg": "Mensagem enviada!" if ok else "Falhou. Verifique token e chat_id."})
 
-@app.route("/monitor/scan_agora", methods=["POST"])
+@app.route("/monitor/scan_agora", methods=["GET", "POST"])
 def monitor_scan_agora():
     cfg     = cfg_load()
     alertas = monitor_scan(cfg)
