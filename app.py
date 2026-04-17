@@ -981,8 +981,6 @@ def cfg_save(data):
 
 def tg_send(token, chat_id, texto):
     """Envia mensagem via Telegram Bot API."""
-    token   = token   or os.environ.get("TG_TOKEN", "")
-    chat_id = chat_id or os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:
         return False
     try:
