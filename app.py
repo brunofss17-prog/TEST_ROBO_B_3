@@ -882,6 +882,40 @@ def rota_backtest():
         return jsonify({"erro": str(e)})
 
 
+
+@app.route("/configurar_telegram")
+def configurar_telegram():
+    token   = request.args.get("token", "")
+    chat_id = request.args.get("chat_id", "")
+    if not token or not chat_id:
+        return jsonify({"erro": "Informe token e chat_id"})
+    cfg = cfg_load()
+    cfg["tg_token"]  = token
+    cfg["tg_chat_id"] = chat_id
+    cfg_save(cfg)
+    ok = tg_send(token, chat_id, "🤖 <b>Robô B3 conectado!</b>\nTelegram configurado com sucesso!")
+    return jsonify({"ok": ok, "salvo": True})
+
+@app.route("/scan_manual")
+def scan_manual():
+    cfg = cfg_load()
+    alertas = monitor_scan(cfg)
+    return jsonify({"ok": True, "alertas": len(alertas), "ultimo_scan": cfg["ultimo_scan"]})
+
+@app.route("/tg_debug")
+def tg_debug():
+    token   = os.environ.get("TG_TOKEN", "NAO_ENCONTRADO")
+    chat_id = os.environ.get("TG_CHAT_ID", "NAO_ENCONTRADO")
+    cfg = cfg_load()
+    ok = tg_send(token, chat_id, "🤖 Teste debug Robô B3")
+    return jsonify({
+        "env_token":  token[:8] + "..." if len(token) > 8 else token,
+        "env_chatid": chat_id,
+        "cfg_token":  cfg.get("tg_token","")[:8] + "..." if cfg.get("tg_token") else "",
+        "cfg_chatid": cfg.get("tg_chat_id",""),
+        "tg_enviado": ok
+    })
+
 if __name__ == "__main__":
     print("\n🤖 Robô B3 — Análise Técnica")
     print("👉  Acesse: http://localhost:5000\n")
