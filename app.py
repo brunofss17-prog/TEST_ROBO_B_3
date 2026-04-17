@@ -1,4 +1,3 @@
-# Robô B3 v2.1
 from flask import Flask, render_template, jsonify, request
 import yfinance as yf
 import pandas as pd
@@ -882,18 +881,6 @@ def rota_backtest():
     except Exception as e:
         return jsonify({"erro": str(e)})
 
-@app.route("/configurar_telegram")
-def configurar_telegram():
-    token   = request.args.get("token", "")
-    chat_id = request.args.get("chat_id", "")
-    if not token or not chat_id:
-        return jsonify({"erro": "Informe token e chat_id"})
-    cfg = cfg_load()
-    cfg["tg_token"]  = token
-    cfg["tg_chat_id"] = chat_id
-    cfg_save(cfg)
-    ok = tg_send(token, chat_id, "🤖 <b>Robô B3 conectado!</b>\nTelegram configurado com sucesso!")
-    return jsonify({"ok": ok, "salvo": True})
 
 if __name__ == "__main__":
     print("\n🤖 Robô B3 — Análise Técnica")
@@ -932,10 +919,6 @@ CONFIG_DEFAULT = {
     "sinais_anteriores": {},       # {ticker: sinal} — evita alertas repetidos
 }
 
-# Lê credenciais Telegram das variáveis de ambiente (Railway)
-_TG_TOKEN   = os.environ.get("TG_TOKEN", "")
-_TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
-
 def cfg_load():
     cfg = {}
     if os.path.exists(CONFIG_PATH):
@@ -946,8 +929,9 @@ def cfg_load():
             pass
     for k, v in CONFIG_DEFAULT.items():
         cfg.setdefault(k, v)
+    # Sempre prioriza variáveis de ambiente do Railway
     if os.environ.get("TG_TOKEN"):
-        cfg["tg_token"] = os.environ.get("TG_TOKEN")
+        cfg["tg_token"]  = os.environ.get("TG_TOKEN")
     if os.environ.get("TG_CHAT_ID"):
         cfg["tg_chat_id"] = os.environ.get("TG_CHAT_ID")
     return cfg
@@ -962,8 +946,9 @@ def cfg_save(data):
 # ── Telegram ──────────────────────────────────────────────────────
 
 def tg_send(token, chat_id, texto):
-    token   = token   or _TG_TOKEN
-    chat_id = chat_id or _TG_CHAT_ID
+    """Envia mensagem via Telegram Bot API."""
+    token   = token   or os.environ.get("TG_TOKEN", "")
+    chat_id = chat_id or os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:
         return False
     try:
@@ -1130,7 +1115,7 @@ def monitor_get_config():
         safe["tg_token_preview"] = t[:8] + "..." + t[-4:] if len(t) > 12 else "***"
     return jsonify(safe)
 
-@app.route("/monitor/config", methods=["GET", "POST"])
+@app.route("/monitor/config", methods=["GET","POST"])
 def monitor_set_config():
     data = request.json or {}
     cfg  = cfg_load()
@@ -1142,13 +1127,13 @@ def monitor_set_config():
     cfg_save(cfg)
     return jsonify({"ok": True})
 
-@app.route("/monitor/teste_telegram", methods=["GET", "POST"])
+@app.route("/monitor/teste_telegram", methods=["GET","POST"])
 def monitor_teste_telegram():
     cfg = cfg_load()
     ok  = tg_test(cfg["tg_token"], cfg["tg_chat_id"])
     return jsonify({"ok": ok, "msg": "Mensagem enviada!" if ok else "Falhou. Verifique token e chat_id."})
 
-@app.route("/monitor/scan_agora", methods=["GET", "POST"])
+@app.route("/monitor/scan_agora", methods=["GET","POST"])
 def monitor_scan_agora():
     cfg     = cfg_load()
     alertas = monitor_scan(cfg)
