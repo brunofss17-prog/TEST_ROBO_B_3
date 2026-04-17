@@ -882,6 +882,18 @@ def rota_backtest():
     except Exception as e:
         return jsonify({"erro": str(e)})
 
+@app.route("/configurar_telegram")
+def configurar_telegram():
+    token   = request.args.get("token", "")
+    chat_id = request.args.get("chat_id", "")
+    if not token or not chat_id:
+        return jsonify({"erro": "Informe token e chat_id"})
+    cfg = cfg_load()
+    cfg["tg_token"]  = token
+    cfg["tg_chat_id"] = chat_id
+    cfg_save(cfg)
+    ok = tg_send(token, chat_id, "🤖 <b>Robô B3 conectado!</b>\nTelegram configurado com sucesso!")
+    return jsonify({"ok": ok, "salvo": True})
 
 if __name__ == "__main__":
     print("\n🤖 Robô B3 — Análise Técnica")
