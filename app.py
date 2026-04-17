@@ -1,3 +1,4 @@
+# Robô B3 v2.1
 from flask import Flask, render_template, jsonify, request
 import yfinance as yf
 import pandas as pd
