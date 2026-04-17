@@ -919,6 +919,10 @@ CONFIG_DEFAULT = {
     "sinais_anteriores": {},       # {ticker: sinal} — evita alertas repetidos
 }
 
+# Lê credenciais Telegram das variáveis de ambiente (Railway)
+_TG_TOKEN   = os.environ.get("TG_TOKEN", "")
+_TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
+
 def cfg_load():
     if os.path.exists(CONFIG_PATH):
         try:
@@ -942,7 +946,8 @@ def cfg_save(data):
 # ── Telegram ──────────────────────────────────────────────────────
 
 def tg_send(token, chat_id, texto):
-    """Envia mensagem via Telegram Bot API."""
+    token   = token   or _TG_TOKEN
+    chat_id = chat_id or _TG_CHAT_ID
     if not token or not chat_id:
         return False
     try:
