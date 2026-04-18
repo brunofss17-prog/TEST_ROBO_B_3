@@ -1330,7 +1330,7 @@ async function loadMonitor(){
     if(ta && d.tickers) ta.value = d.tickers.join('\n');
 
     // Sinais live
-    renderSinaisLive(d.sinais || {});
+    renderSinaisLive(d.sinais || {}, d.sinais_datas || {});
 
     monLog('Status atualizado.');
   }catch(e){
@@ -1338,7 +1338,7 @@ async function loadMonitor(){
   }
 }
 
-function renderSinaisLive(sinais){
+function renderSinaisLive(sinais, datas){
   const el = document.getElementById('sinais-live');
   if(!el) return;
   const entries = Object.entries(sinais);
@@ -1349,7 +1349,10 @@ function renderSinaisLive(sinais){
   el.innerHTML = entries.map(([t,s])=>`
     <div class="sinal-row">
       <span class="tck">${t}</span>
-      <span class="sinal-pill ${s}">${s}</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+        <span class="sinal-pill ${s}">${s}</span>
+        ${datas&&datas[t] ? `<span style="font-size:9px;color:var(--muted);font-family:var(--mono)">desde ${datas[t]}</span>` : ''}
+      </div>
     </div>`).join('');
 }
 
