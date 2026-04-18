@@ -924,6 +924,8 @@ if __name__ == "__main__":
 
 # ═════════════════════════════════════════════════════════════════
 #  MONITOR + TELEGRAM + SCHEDULER
+#  Toda config fica em memória (_STATE) — sem depender de /tmp
+#  Todas as rotas aceitam GET — sem problemas de CORS/POST
 # ═════════════════════════════════════════════════════════════════
 
 import threading
@@ -931,109 +933,81 @@ import time
 import json
 import os
 import urllib.request
-import urllib.parse
 from datetime import datetime
 
-# ── Arquivo de configuração persistente (Railway usa /tmp, local usa pasta do projeto) ──
-CONFIG_PATH = os.environ.get("CONFIG_PATH", os.path.join(os.path.dirname(__file__), "monitor_config.json"))
-
-CONFIG_DEFAULT = {
-    "ativo":       True,           # monitor ligado/desligado
-    "estrategia":  1,
-    "tickers":     ["PETR4", "VALE3", "ITUB4", "WEGE3", "PRIO3"],
-    "intervalo":   30,             # minutos entre varreduras
-    "hora_inicio": "10:00",
-    "hora_fim":    "18:00",
-    "tg_token":    "",             # token do bot Telegram
-    "tg_chat_id":  "",             # chat_id do usuário
-    "alertar_compra": True,
-    "alertar_venda":  True,
-    "alertar_neutro": False,
-    "ultimo_scan":    "",
-    "sinais_anteriores": {},       # {ticker: sinal} — evita alertas repetidos
+# ── Estado em memória (persiste enquanto o servidor estiver rodando) ──
+_STATE = {
+    "ativo":             True,
+    "estrategia":        1,
+    "tickers":           ["PETR4", "VALE3", "ITUB4", "WEGE3", "PRIO3"],
+    "intervalo":         30,
+    "hora_inicio":       "10:00",
+    "hora_fim":          "18:00",
+    "tg_token":          "",
+    "tg_chat_id":        "",
+    "alertar_compra":    True,
+    "alertar_venda":     True,
+    "alertar_neutro":    False,
+    "ultimo_scan":       "",
+    "sinais_anteriores": {},
 }
 
-def cfg_load():
-    cfg = {}
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            pass
-    for k, v in CONFIG_DEFAULT.items():
-        cfg.setdefault(k, v)
-    # Sempre prioriza variáveis de ambiente do Railway
-    if os.environ.get("TG_TOKEN"):
-        cfg["tg_token"]  = os.environ.get("TG_TOKEN")
-    if os.environ.get("TG_CHAT_ID"):
-        cfg["tg_chat_id"] = os.environ.get("TG_CHAT_ID")
-    return cfg
+def state_get():
+    return _STATE
 
-def cfg_save(data):
-    try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[cfg_save] Erro: {e}")
+def state_set(**kwargs):
+    for k, v in kwargs.items():
+        if k in _STATE:
+            _STATE[k] = v
 
 # ── Telegram ──────────────────────────────────────────────────────
 
 def tg_send(token, chat_id, texto):
-    """Envia mensagem via Telegram Bot API."""
     if not token or not chat_id:
         return False
     try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        url     = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = json.dumps({
-            "chat_id":    chat_id,
+            "chat_id":    str(chat_id),
             "text":       texto,
             "parse_mode": "HTML",
         }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload,
-                                     headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json"}
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status == 200
     except Exception as e:
         print(f"[Telegram] Erro: {e}")
         return False
 
-def tg_test(token, chat_id):
-    """Envia mensagem de teste."""
-    return tg_send(token, chat_id,
-        "🤖 <b>Robô B3 conectado!</b>\n"
-        "Você receberá alertas de compra e venda aqui.\n"
-        f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-
-def tg_alerta(cfg, ticker, sinal, preco, var_pct, score, tendencia, estrategia):
-    """Formata e envia alerta de sinal."""
-    est_names = {1: "RSI5d+MACD+BB", 2: "RSI14sem+MACD+BB", 3: "Médias+MACD+Vol", 4: "RSI14 Semanal", 5: "RSI2 Diário", 6: "RSI5 Diário"}
-    if sinal == "COMPRA":
-        emoji = "🟢"
-    elif sinal == "VENDA":
-        emoji = "🔴"
-    else:
-        emoji = "⚪"
-
+def tg_alerta(ticker, sinal, preco, var_pct, score, tendencia, estrategia):
+    est_names = {
+        1: "RSI5d+MACD+BB", 2: "RSI14sem+MACD+BB",
+        3: "Médias+MACD+Vol", 4: "RSI14 Semanal",
+        5: "RSI2 Diário",    6: "RSI5 Diário"
+    }
+    emoji   = "🟢" if sinal == "COMPRA" else "🔴" if sinal == "VENDA" else "⚪"
     var_str = f"+{var_pct:.2f}%" if var_pct >= 0 else f"{var_pct:.2f}%"
-    score_str = f"+{score}" if score > 0 else str(score)
-
+    sc_str  = f"+{score}" if score > 0 else str(score)
     msg = (
         f"{emoji} <b>{ticker} — {sinal}</b>\n"
         f"💰 Preço: <b>R$ {preco:.2f}</b> ({var_str})\n"
-        f"📊 Score: {score_str} | Tendência: {tendencia}\n"
-        f"🔧 Estratégia: {est_names.get(estrategia, estrategia)}\n"
+        f"📊 Score: {sc_str} | Tendência: {tendencia}\n"
+        f"🔧 Estratégia: {est_names.get(estrategia, str(estrategia))}\n"
         f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     )
-    return tg_send(cfg["tg_token"], cfg["tg_chat_id"], msg)
+    s = state_get()
+    return tg_send(s["tg_token"], s["tg_chat_id"], msg)
 
 # ── Scanner do monitor ────────────────────────────────────────────
 
-def monitor_scan(cfg):
-    """Roda uma varredura e dispara alertas para sinais novos ou mudados."""
-    tickers    = cfg.get("tickers", [])
-    estrategia = int(cfg.get("estrategia", 1))
-    anteriores = cfg.get("sinais_anteriores", {})
+def monitor_scan():
+    s          = state_get()
+    tickers    = s.get("tickers", [])
+    estrategia = int(s.get("estrategia", 1))
+    anteriores = s.get("sinais_anteriores", {})
     novos      = dict(anteriores)
     alertas    = []
 
@@ -1042,147 +1016,169 @@ def monitor_scan(cfg):
             res = analisar_ticker(ticker)
             if not res:
                 continue
-
-            sinal    = res["sinal" if "sinal" in res else "e1"]["dec"] if "e1" in res else None
-            # pega o sinal da estratégia configurada
-            key_map  = {1: "e1", 2: "e2", 3: "e3", 4: "e4", 5: "e5", 6: "e6"}
-            est_key  = key_map.get(estrategia, "e1")
-            sig_obj  = res.get(est_key, {})
-            sinal    = sig_obj.get("dec", "NEUTRO")
-            score    = sig_obj.get("score", 0)
-            preco    = res.get("preco", 0)
-            var_pct  = res.get("var_pct", 0)
-            tend     = res.get("tend", {}).get("label", "—")
+            key_map = {1:"e1",2:"e2",3:"e3",4:"e4",5:"e5",6:"e6"}
+            sig_obj = res.get(key_map.get(estrategia,"e1"), {})
+            sinal   = sig_obj.get("dec", "NEUTRO")
+            score   = sig_obj.get("score", 0)
+            preco   = res.get("preco", 0)
+            var_pct = res.get("var_pct", 0)
+            tend    = res.get("tend", {}).get("label", "—")
 
             sinal_ant = anteriores.get(ticker, "")
-
-            # Alerta se sinal mudou
-            mudou = sinal != sinal_ant
-            if mudou:
-                deve_alertar = (
-                    (sinal == "COMPRA" and cfg.get("alertar_compra", True)) or
-                    (sinal == "VENDA"  and cfg.get("alertar_venda", True))  or
-                    (sinal == "NEUTRO" and cfg.get("alertar_neutro", False))
+            if sinal != sinal_ant:
+                deve = (
+                    (sinal == "COMPRA" and s.get("alertar_compra", True)) or
+                    (sinal == "VENDA"  and s.get("alertar_venda",  True)) or
+                    (sinal == "NEUTRO" and s.get("alertar_neutro", False))
                 )
-                if deve_alertar:
-                    ok = tg_alerta(cfg, ticker, sinal, preco, var_pct, score, tend, estrategia)
+                if deve:
+                    ok = tg_alerta(ticker, sinal, preco, var_pct, score, tend, estrategia)
                     alertas.append({
                         "ticker": ticker, "sinal": sinal, "preco": preco,
-                        "score": score, "tendencia": tend, "ok": ok,
-                        "mudou_de": sinal_ant or "—"
+                        "score": score, "tendencia": tend,
+                        "ok": ok, "mudou_de": sinal_ant or "—"
                     })
                 novos[ticker] = sinal
-
         except Exception as e:
             print(f"[monitor_scan] {ticker}: {e}")
 
-    cfg["sinais_anteriores"] = novos
-    cfg["ultimo_scan"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    cfg_save(cfg)
+    _STATE["sinais_anteriores"] = novos
+    _STATE["ultimo_scan"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     return alertas
 
-# ── Scheduler (thread em background) ─────────────────────────────
+# ── Scheduler ────────────────────────────────────────────────────
 
-_scheduler_running = False
-_scheduler_thread  = None
+_sched_running = False
 
-def _scheduler_loop():
-    global _scheduler_running
+def _sched_loop():
+    global _sched_running
     print("[Scheduler] Iniciado.")
-    while _scheduler_running:
-        cfg = cfg_load()
-        if not cfg.get("ativo", False):
+    while _sched_running:
+        s = state_get()
+        if not s.get("ativo", False):
             time.sleep(60)
             continue
-
         agora = datetime.now()
         try:
-            h_ini = datetime.strptime(cfg["hora_inicio"], "%H:%M").replace(
+            h_ini = datetime.strptime(s["hora_inicio"], "%H:%M").replace(
                 year=agora.year, month=agora.month, day=agora.day)
-            h_fim = datetime.strptime(cfg["hora_fim"], "%H:%M").replace(
+            h_fim = datetime.strptime(s["hora_fim"], "%H:%M").replace(
                 year=agora.year, month=agora.month, day=agora.day)
         except Exception:
             time.sleep(60)
             continue
-
-        # Só varre em dias úteis (seg-sex) dentro do horário configurado
         if agora.weekday() < 5 and h_ini <= agora <= h_fim:
-            print(f"[Scheduler] Varrendo {len(cfg['tickers'])} ativos...")
+            print(f"[Scheduler] Varrendo {len(s['tickers'])} ativos...")
             try:
-                alertas = monitor_scan(cfg)
+                alertas = monitor_scan()
                 if alertas:
                     print(f"[Scheduler] {len(alertas)} alerta(s) enviado(s).")
             except Exception as e:
-                print(f"[Scheduler] Erro na varredura: {e}")
-
-        intervalo = int(cfg.get("intervalo", 30)) * 60
-        time.sleep(intervalo)
-
+                print(f"[Scheduler] Erro: {e}")
+        time.sleep(int(s.get("intervalo", 30)) * 60)
     print("[Scheduler] Parado.")
 
 def scheduler_start():
-    global _scheduler_running, _scheduler_thread
-    if _scheduler_running:
+    global _sched_running
+    if _sched_running:
         return
-    _scheduler_running = True
-    _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
-    _scheduler_thread.start()
+    _sched_running = True
+    t = threading.Thread(target=_sched_loop, daemon=True)
+    t.start()
 
-def scheduler_stop():
-    global _scheduler_running
-    _scheduler_running = False
-
-# Inicia scheduler automaticamente junto com o Flask
 scheduler_start()
 
-# ── Rotas do monitor ──────────────────────────────────────────────
+# ── Rotas do monitor (todas GET — sem problemas de CORS/POST) ─────
 
-@app.route("/monitor/config", methods=["GET"])
-def monitor_get_config():
-    cfg = cfg_load()
-    # Não expõe token completo na API
-    safe = dict(cfg)
-    if safe.get("tg_token"):
-        t = safe["tg_token"]
-        safe["tg_token_preview"] = t[:8] + "..." + t[-4:] if len(t) > 12 else "***"
-    return jsonify(safe)
-
-@app.route("/monitor/config", methods=["GET","POST"])
-def monitor_set_config():
-    data = request.json or {}
-    cfg  = cfg_load()
-    campos = ["ativo","estrategia","tickers","intervalo","hora_inicio","hora_fim",
-              "tg_token","tg_chat_id","alertar_compra","alertar_venda","alertar_neutro"]
-    for c in campos:
-        if c in data:
-            cfg[c] = data[c]
-    cfg_save(cfg)
-    return jsonify({"ok": True})
-
-@app.route("/monitor/teste_telegram", methods=["GET","POST"])
-def monitor_teste_telegram():
-    cfg = cfg_load()
-    ok  = tg_test(cfg["tg_token"], cfg["tg_chat_id"])
-    return jsonify({"ok": ok, "msg": "Mensagem enviada!" if ok else "Falhou. Verifique token e chat_id."})
-
-@app.route("/monitor/scan_agora", methods=["GET","POST"])
-def monitor_scan_agora():
-    cfg     = cfg_load()
-    alertas = monitor_scan(cfg)
-    return jsonify({"ok": True, "alertas": alertas, "ultimo_scan": cfg["ultimo_scan"]})
-
-@app.route("/monitor/status", methods=["GET"])
+@app.route("/monitor/status")
 def monitor_status():
-    cfg = cfg_load()
+    s = state_get()
     return jsonify({
-        "ativo":          cfg.get("ativo", False),
-        "ultimo_scan":    cfg.get("ultimo_scan", "—"),
-        "total_ativos":   len(cfg.get("tickers", [])),
-        "estrategia":     cfg.get("estrategia", 1),
-        "intervalo":      cfg.get("intervalo", 30),
-        "hora_inicio":    cfg.get("hora_inicio", "10:00"),
-        "hora_fim":       cfg.get("hora_fim", "18:00"),
-        "tg_configurado": bool(cfg.get("tg_token") and cfg.get("tg_chat_id")),
-        "sinais":         cfg.get("sinais_anteriores", {}),
-        "scheduler_on":   _scheduler_running,
+        "ativo":          s["ativo"],
+        "estrategia":     s["estrategia"],
+        "intervalo":      s["intervalo"],
+        "hora_inicio":    s["hora_inicio"],
+        "hora_fim":       s["hora_fim"],
+        "tg_configurado": bool(s["tg_token"] and s["tg_chat_id"]),
+        "tickers":        s["tickers"],
+        "total_ativos":   len(s["tickers"]),
+        "ultimo_scan":    s["ultimo_scan"],
+        "sinais":         s["sinais_anteriores"],
+        "alertar_compra": s["alertar_compra"],
+        "alertar_venda":  s["alertar_venda"],
+        "alertar_neutro": s["alertar_neutro"],
+        "scheduler_on":   _sched_running,
     })
+
+@app.route("/monitor/salvar")
+def monitor_salvar():
+    """Salva todas as configs via GET params."""
+    s = state_get()
+
+    # Token e Chat ID
+    token   = request.args.get("tg_token",   "").strip()
+    chat_id = request.args.get("tg_chat_id", "").strip()
+    if token:   s["tg_token"]   = token
+    if chat_id: s["tg_chat_id"] = chat_id
+
+    # Configurações gerais
+    if request.args.get("estrategia"):
+        s["estrategia"] = int(request.args.get("estrategia"))
+    if request.args.get("intervalo"):
+        s["intervalo"] = int(request.args.get("intervalo"))
+    if request.args.get("hora_inicio"):
+        s["hora_inicio"] = request.args.get("hora_inicio")
+    if request.args.get("hora_fim"):
+        s["hora_fim"] = request.args.get("hora_fim")
+    if request.args.get("ativo") is not None:
+        s["ativo"] = request.args.get("ativo") == "true"
+    if request.args.get("alertar_compra") is not None:
+        s["alertar_compra"] = request.args.get("alertar_compra") == "true"
+    if request.args.get("alertar_venda") is not None:
+        s["alertar_venda"] = request.args.get("alertar_venda") == "true"
+    if request.args.get("alertar_neutro") is not None:
+        s["alertar_neutro"] = request.args.get("alertar_neutro") == "true"
+
+    # Tickers
+    tickers_raw = request.args.get("tickers", "")
+    if tickers_raw:
+        tickers = [t.strip().upper() for t in tickers_raw.replace("\n",",").split(",") if t.strip()]
+        if tickers:
+            s["tickers"] = tickers
+
+    return jsonify({"ok": True, "estado": {
+        "ativo": s["ativo"],
+        "estrategia": s["estrategia"],
+        "tickers": s["tickers"],
+        "tg_configurado": bool(s["tg_token"] and s["tg_chat_id"]),
+    }})
+
+@app.route("/monitor/testar_telegram")
+def monitor_testar_telegram():
+    s = state_get()
+    token   = request.args.get("tg_token",   s["tg_token"]).strip()
+    chat_id = request.args.get("tg_chat_id", s["tg_chat_id"]).strip()
+    # Salva na memória ao mesmo tempo
+    if token:   s["tg_token"]   = token
+    if chat_id: s["tg_chat_id"] = chat_id
+    ok = tg_send(token, chat_id,
+        "🤖 <b>Robô B3 conectado!</b>\n"
+        "Você receberá alertas de compra e venda aqui.\n"
+        f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    )
+    return jsonify({
+        "ok":  ok,
+        "msg": "✅ Mensagem enviada! Verifique o Telegram." if ok else "❌ Falhou. Verifique o token e o Chat ID."
+    })
+
+@app.route("/monitor/scan_agora")
+def monitor_scan_agora():
+    alertas = monitor_scan()
+    s = state_get()
+    return jsonify({"ok": True, "alertas": alertas, "total": len(alertas), "ultimo_scan": s["ultimo_scan"]})
+
+@app.route("/monitor/toggle_ativo")
+def monitor_toggle_ativo():
+    s = state_get()
+    s["ativo"] = not s["ativo"]
+    return jsonify({"ok": True, "ativo": s["ativo"]})
