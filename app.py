@@ -950,6 +950,7 @@ _STATE = {
     "alertar_neutro":    False,
     "ultimo_scan":       "",
     "sinais_anteriores": {},
+    "sinais_datas":      {},   # {ticker: "dd/mm/yyyy HH:MM"} — data do início do sinal atual
 }
 
 def state_get():
@@ -982,7 +983,7 @@ def tg_send(token, chat_id, texto):
         print(f"[Telegram] Erro: {e}")
         return False
 
-def tg_alerta(ticker, sinal, preco, var_pct, score, tendencia, estrategia):
+def tg_alerta(ticker, sinal, preco, var_pct, score, tendencia, estrategia, data_sinal=None):
     est_names = {
         1: "RSI5d+MACD+BB", 2: "RSI14sem+MACD+BB",
         3: "Médias+MACD+Vol", 4: "RSI14 Semanal",
@@ -991,12 +992,14 @@ def tg_alerta(ticker, sinal, preco, var_pct, score, tendencia, estrategia):
     emoji   = "🟢" if sinal == "COMPRA" else "🔴" if sinal == "VENDA" else "⚪"
     var_str = f"+{var_pct:.2f}%" if var_pct >= 0 else f"{var_pct:.2f}%"
     sc_str  = f"+{score}" if score > 0 else str(score)
+    data_str = data_sinal or datetime.now().strftime("%d/%m/%Y %H:%M")
     msg = (
         f"{emoji} <b>{ticker} — {sinal}</b>\n"
         f"💰 Preço: <b>R$ {preco:.2f}</b> ({var_str})\n"
         f"📊 Score: {sc_str} | Tendência: {tendencia}\n"
         f"🔧 Estratégia: {est_names.get(estrategia, str(estrategia))}\n"
-        f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"📅 Sinal desde: {data_str}\n"
+        f"🕐 Detectado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     )
     s = state_get()
     return tg_send(s["tg_token"], s["tg_chat_id"], msg)
@@ -1009,6 +1012,7 @@ def monitor_scan():
     estrategia = int(s.get("estrategia", 1))
     anteriores = s.get("sinais_anteriores", {})
     novos      = dict(anteriores)
+    datas_sinais = dict(s.get("sinais_datas", {}))
     alertas    = []
 
     for ticker in tickers:
@@ -1026,23 +1030,27 @@ def monitor_scan():
 
             sinal_ant = anteriores.get(ticker, "")
             if sinal != sinal_ant:
+                data_sinal = datetime.now().strftime("%d/%m/%Y %H:%M")
+                datas_sinais[ticker] = data_sinal
                 deve = (
                     (sinal == "COMPRA" and s.get("alertar_compra", True)) or
                     (sinal == "VENDA"  and s.get("alertar_venda",  True)) or
                     (sinal == "NEUTRO" and s.get("alertar_neutro", False))
                 )
                 if deve:
-                    ok = tg_alerta(ticker, sinal, preco, var_pct, score, tend, estrategia)
+                    ok = tg_alerta(ticker, sinal, preco, var_pct, score, tend, estrategia, data_sinal)
                     alertas.append({
                         "ticker": ticker, "sinal": sinal, "preco": preco,
                         "score": score, "tendencia": tend,
-                        "ok": ok, "mudou_de": sinal_ant or "—"
+                        "ok": ok, "mudou_de": sinal_ant or "—",
+                        "data_sinal": data_sinal
                     })
                 novos[ticker] = sinal
         except Exception as e:
             print(f"[monitor_scan] {ticker}: {e}")
 
     _STATE["sinais_anteriores"] = novos
+    _STATE["sinais_datas"]      = datas_sinais
     _STATE["ultimo_scan"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     return alertas
 
@@ -1104,6 +1112,7 @@ def monitor_status():
         "total_ativos":   len(s["tickers"]),
         "ultimo_scan":    s["ultimo_scan"],
         "sinais":         s["sinais_anteriores"],
+        "sinais_datas":   s.get("sinais_datas", {}),
         "alertar_compra": s["alertar_compra"],
         "alertar_venda":  s["alertar_venda"],
         "alertar_neutro": s["alertar_neutro"],
