@@ -6,183 +6,7 @@
 <title>Robô B3</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js">
-/* ════════════════════════════════════════════
-   MONITOR — todas as ações via GET, sem POST
-════════════════════════════════════════════ */
-let _monLog = [];
 
-function monLog(msg){
-  _monLog.unshift(`[${new Date().toLocaleTimeString('pt-BR')}] ${msg}`);
-  if(_monLog.length > 50) _monLog.pop();
-  const el = document.getElementById('mon-log');
-  if(el) el.textContent = _monLog.join('\n');
-}
-
-function monSetStatus(msg, tipo){
-  // tipo: 'ok', 'err', 'ld'
-  const el = document.getElementById('mon-status-txt');
-  if(el) el.textContent = msg;
-}
-
-async function loadMonitor(){
-  try{
-    const r = await fetch('/monitor/status');
-    const d = await r.json();
-
-    // Toggle
-    const tog = document.getElementById('mon-ativo');
-    if(tog) tog.checked = d.ativo;
-
-    // Pills e labels
-    const pill = document.getElementById('mon-pill');
-    if(pill){
-      pill.textContent = d.ativo ? 'ATIVO' : 'PARADO';
-      pill.className = 'mon-status-pill ' + (d.ativo ? 'on' : 'off');
-    }
-
-    const setTxt = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val || '—'; };
-    setTxt('mon-ultimo',   d.ultimo_scan);
-    setTxt('mon-total',    d.total_ativos + ' ativos');
-    setTxt('mon-tg-status', d.tg_configurado ? '✅ Configurado' : '❌ Não configurado');
-    setTxt('mon-estrategia-label', ['','RSI5d+MACD+BB','RSI14sem+MACD+BB','Médias+MACD+Vol','RSI14 Semanal','RSI2 Diário','RSI5 Diário'][d.estrategia] || d.estrategia);
-
-    // Campos de config
-    const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val; };
-    const setChk = (id, val) => { const el = document.getElementById(id); if(el) el.checked = val; };
-    setVal('mon-est',       d.estrategia);
-    setVal('mon-intervalo', d.intervalo);
-    setVal('mon-h-ini',     d.hora_inicio);
-    setVal('mon-h-fim',     d.hora_fim);
-    setChk('mon-alerta-c',  d.alertar_compra);
-    setChk('mon-alerta-v',  d.alertar_venda);
-    setChk('mon-alerta-n',  d.alertar_neutro);
-
-    // Tickers
-    const ta = document.getElementById('mon-tickers');
-    if(ta && d.tickers) ta.value = d.tickers.join('\n');
-
-    // Sinais live
-    renderSinaisLive(d.sinais || {});
-
-    monLog('Status atualizado.');
-  }catch(e){
-    monLog('Erro ao carregar status: ' + e.message);
-  }
-}
-
-function renderSinaisLive(sinais){
-  const el = document.getElementById('sinais-live');
-  if(!el) return;
-  const entries = Object.entries(sinais);
-  if(!entries.length){
-    el.innerHTML = '<div style="color:var(--muted);font-size:11px">Nenhum sinal ainda. Rode um scan.</div>';
-    return;
-  }
-  el.innerHTML = entries.map(([t,s])=>`
-    <div class="sinal-row">
-      <span class="tck">${t}</span>
-      <span class="sinal-pill ${s}">${s}</span>
-    </div>`).join('');
-}
-
-async function toggleMonitor(){
-  try{
-    const r = await fetch('/monitor/toggle_ativo');
-    const d = await r.json();
-    monLog(d.ativo ? '✅ Monitor ativado.' : '⏸ Monitor pausado.');
-    await loadMonitor();
-  }catch(e){
-    monLog('Erro ao alterar monitor: ' + e.message);
-  }
-}
-
-async function salvarConfig(){
-  try{
-    // Coleta tickers
-    const raw = document.getElementById('mon-tickers').value || '';
-    const tickers = raw.replace(/\n/g,',').split(',')
-      .map(t=>t.trim().toUpperCase()).filter(Boolean).join(',');
-
-    // Coleta token e chat_id
-    const token   = (document.getElementById('mon-tg-token').value   || '').trim();
-    const chat_id = (document.getElementById('mon-tg-chatid').value  || '').trim();
-
-    const params = new URLSearchParams({
-      estrategia:     document.getElementById('mon-est').value,
-      intervalo:      document.getElementById('mon-intervalo').value,
-      hora_inicio:    document.getElementById('mon-h-ini').value,
-      hora_fim:       document.getElementById('mon-h-fim').value,
-      alertar_compra: document.getElementById('mon-alerta-c').checked,
-      alertar_venda:  document.getElementById('mon-alerta-v').checked,
-      alertar_neutro: document.getElementById('mon-alerta-n').checked,
-      tickers:        tickers,
-    });
-
-    if(token)   params.set('tg_token',   token);
-    if(chat_id) params.set('tg_chat_id', chat_id);
-
-    const r = await fetch('/monitor/salvar?' + params.toString());
-    const d = await r.json();
-
-    if(d.ok){
-      monLog(`✅ Configuração salva! ${d.estado.tickers?.length || 0} ativos · Telegram: ${d.estado.tg_configurado ? 'OK' : 'não configurado'}`);
-      // Feedback visual
-      const btns = document.querySelectorAll('.mon-btn-acc');
-      btns.forEach(b => { const orig = b.textContent; b.textContent = '✅ Salvo!'; setTimeout(()=>b.textContent=orig, 2000); });
-    } else {
-      monLog('❌ Erro ao salvar.');
-    }
-    await loadMonitor();
-  }catch(e){
-    monLog('Erro ao salvar: ' + e.message);
-  }
-}
-
-async function testarTelegram(){
-  const token   = (document.getElementById('mon-tg-token').value  || '').trim();
-  const chat_id = (document.getElementById('mon-tg-chatid').value || '').trim();
-  const logEl   = document.getElementById('tg-log');
-  if(logEl) logEl.textContent = '⏳ Enviando mensagem de teste...';
-  monLog('Testando conexão Telegram...');
-
-  try{
-    const params = new URLSearchParams();
-    if(token)   params.set('tg_token',   token);
-    if(chat_id) params.set('tg_chat_id', chat_id);
-
-    const r = await fetch('/monitor/testar_telegram?' + params.toString());
-    const d = await r.json();
-
-    if(logEl) logEl.textContent = d.msg;
-    monLog(d.ok ? '✅ Telegram OK!' : '❌ Telegram falhou: ' + d.msg);
-    if(d.ok) await loadMonitor();
-  }catch(e){
-    if(logEl) logEl.textContent = '❌ Erro: ' + e.message;
-    monLog('Erro: ' + e.message);
-  }
-}
-
-async function scanAgora(){
-  monLog('⏳ Iniciando scan...');
-  st('ld', 'Rodando scan manual...');
-  try{
-    const r = await fetch('/monitor/scan_agora');
-    const d = await r.json();
-    const n = d.total || 0;
-    monLog(`✅ Scan concluído. ${n} alerta(s) enviado(s). ${d.ultimo_scan}`);
-    st('ok', `Scan concluído · ${n} alerta(s)`);
-    await loadMonitor();
-  }catch(e){
-    monLog('❌ Erro no scan: ' + e.message);
-    st('er', 'Erro no scan.');
-  }
-}
-
-// Atualiza status a cada 60s enquanto na aba monitor
-setInterval(()=>{
-  const pg = document.getElementById('page-monitor');
-  if(pg && pg.classList.contains('on')) loadMonitor();
-}, 60000);
 </script>
 <style>
 :root{
@@ -1449,6 +1273,184 @@ function exportarCSV(){
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/* ════════════════════════════════════════════
+   MONITOR — todas as ações via GET, sem POST
+════════════════════════════════════════════ */
+let _monLog = [];
+
+function monLog(msg){
+  _monLog.unshift(`[${new Date().toLocaleTimeString('pt-BR')}] ${msg}`);
+  if(_monLog.length > 50) _monLog.pop();
+  const el = document.getElementById('mon-log');
+  if(el) el.textContent = _monLog.join('\n');
+}
+
+function monSetStatus(msg, tipo){
+  // tipo: 'ok', 'err', 'ld'
+  const el = document.getElementById('mon-status-txt');
+  if(el) el.textContent = msg;
+}
+
+async function loadMonitor(){
+  try{
+    const r = await fetch('/monitor/status');
+    const d = await r.json();
+
+    // Toggle
+    const tog = document.getElementById('mon-ativo');
+    if(tog) tog.checked = d.ativo;
+
+    // Pills e labels
+    const pill = document.getElementById('mon-pill');
+    if(pill){
+      pill.textContent = d.ativo ? 'ATIVO' : 'PARADO';
+      pill.className = 'mon-status-pill ' + (d.ativo ? 'on' : 'off');
+    }
+
+    const setTxt = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val || '—'; };
+    setTxt('mon-ultimo',   d.ultimo_scan);
+    setTxt('mon-total',    d.total_ativos + ' ativos');
+    setTxt('mon-tg-status', d.tg_configurado ? '✅ Configurado' : '❌ Não configurado');
+    setTxt('mon-estrategia-label', ['','RSI5d+MACD+BB','RSI14sem+MACD+BB','Médias+MACD+Vol','RSI14 Semanal','RSI2 Diário','RSI5 Diário'][d.estrategia] || d.estrategia);
+
+    // Campos de config
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val; };
+    const setChk = (id, val) => { const el = document.getElementById(id); if(el) el.checked = val; };
+    setVal('mon-est',       d.estrategia);
+    setVal('mon-intervalo', d.intervalo);
+    setVal('mon-h-ini',     d.hora_inicio);
+    setVal('mon-h-fim',     d.hora_fim);
+    setChk('mon-alerta-c',  d.alertar_compra);
+    setChk('mon-alerta-v',  d.alertar_venda);
+    setChk('mon-alerta-n',  d.alertar_neutro);
+
+    // Tickers
+    const ta = document.getElementById('mon-tickers');
+    if(ta && d.tickers) ta.value = d.tickers.join('\n');
+
+    // Sinais live
+    renderSinaisLive(d.sinais || {});
+
+    monLog('Status atualizado.');
+  }catch(e){
+    monLog('Erro ao carregar status: ' + e.message);
+  }
+}
+
+function renderSinaisLive(sinais){
+  const el = document.getElementById('sinais-live');
+  if(!el) return;
+  const entries = Object.entries(sinais);
+  if(!entries.length){
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px">Nenhum sinal ainda. Rode um scan.</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([t,s])=>`
+    <div class="sinal-row">
+      <span class="tck">${t}</span>
+      <span class="sinal-pill ${s}">${s}</span>
+    </div>`).join('');
+}
+
+async function toggleMonitor(){
+  try{
+    const r = await fetch('/monitor/toggle_ativo');
+    const d = await r.json();
+    monLog(d.ativo ? '✅ Monitor ativado.' : '⏸ Monitor pausado.');
+    await loadMonitor();
+  }catch(e){
+    monLog('Erro ao alterar monitor: ' + e.message);
+  }
+}
+
+async function salvarConfig(){
+  try{
+    // Coleta tickers
+    const raw = document.getElementById('mon-tickers').value || '';
+    const tickers = raw.replace(/\n/g,',').split(',')
+      .map(t=>t.trim().toUpperCase()).filter(Boolean).join(',');
+
+    // Coleta token e chat_id
+    const token   = (document.getElementById('mon-tg-token').value   || '').trim();
+    const chat_id = (document.getElementById('mon-tg-chatid').value  || '').trim();
+
+    const params = new URLSearchParams({
+      estrategia:     document.getElementById('mon-est').value,
+      intervalo:      document.getElementById('mon-intervalo').value,
+      hora_inicio:    document.getElementById('mon-h-ini').value,
+      hora_fim:       document.getElementById('mon-h-fim').value,
+      alertar_compra: document.getElementById('mon-alerta-c').checked,
+      alertar_venda:  document.getElementById('mon-alerta-v').checked,
+      alertar_neutro: document.getElementById('mon-alerta-n').checked,
+      tickers:        tickers,
+    });
+
+    if(token)   params.set('tg_token',   token);
+    if(chat_id) params.set('tg_chat_id', chat_id);
+
+    const r = await fetch('/monitor/salvar?' + params.toString());
+    const d = await r.json();
+
+    if(d.ok){
+      monLog(`✅ Configuração salva! ${d.estado.tickers?.length || 0} ativos · Telegram: ${d.estado.tg_configurado ? 'OK' : 'não configurado'}`);
+      // Feedback visual
+      const btns = document.querySelectorAll('.mon-btn-acc');
+      btns.forEach(b => { const orig = b.textContent; b.textContent = '✅ Salvo!'; setTimeout(()=>b.textContent=orig, 2000); });
+    } else {
+      monLog('❌ Erro ao salvar.');
+    }
+    await loadMonitor();
+  }catch(e){
+    monLog('Erro ao salvar: ' + e.message);
+  }
+}
+
+async function testarTelegram(){
+  const token   = (document.getElementById('mon-tg-token').value  || '').trim();
+  const chat_id = (document.getElementById('mon-tg-chatid').value || '').trim();
+  const logEl   = document.getElementById('tg-log');
+  if(logEl) logEl.textContent = '⏳ Enviando mensagem de teste...';
+  monLog('Testando conexão Telegram...');
+
+  try{
+    const params = new URLSearchParams();
+    if(token)   params.set('tg_token',   token);
+    if(chat_id) params.set('tg_chat_id', chat_id);
+
+    const r = await fetch('/monitor/testar_telegram?' + params.toString());
+    const d = await r.json();
+
+    if(logEl) logEl.textContent = d.msg;
+    monLog(d.ok ? '✅ Telegram OK!' : '❌ Telegram falhou: ' + d.msg);
+    if(d.ok) await loadMonitor();
+  }catch(e){
+    if(logEl) logEl.textContent = '❌ Erro: ' + e.message;
+    monLog('Erro: ' + e.message);
+  }
+}
+
+async function scanAgora(){
+  monLog('⏳ Iniciando scan...');
+  st('ld', 'Rodando scan manual...');
+  try{
+    const r = await fetch('/monitor/scan_agora');
+    const d = await r.json();
+    const n = d.total || 0;
+    monLog(`✅ Scan concluído. ${n} alerta(s) enviado(s). ${d.ultimo_scan}`);
+    st('ok', `Scan concluído · ${n} alerta(s)`);
+    await loadMonitor();
+  }catch(e){
+    monLog('❌ Erro no scan: ' + e.message);
+    st('er', 'Erro no scan.');
+  }
+}
+
+// Atualiza status a cada 60s enquanto na aba monitor
+setInterval(()=>{
+  const pg = document.getElementById('page-monitor');
+  if(pg && pg.classList.contains('on')) loadMonitor();
+}, 60000);
 </script>
 </body>
 </html>
