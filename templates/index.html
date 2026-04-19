@@ -692,6 +692,18 @@ input:checked+.toggle-slider:before{transform:translateX(16px);background:var(--
               </label>
             </div>
           </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding-top:4px;border-top:1px solid var(--bdr)">
+            <span class="mon-label" style="font-size:9px;text-transform:uppercase;letter-spacing:.08em">Resumo diário (seg–sex)</span>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer">
+                <input type="checkbox" id="mon-resumo-ativo" checked style="accent-color:var(--acc)"/>
+                <span>Ativar resumo às</span>
+              </label>
+              <input type="time" class="mon-input" id="mon-hora-resumo" value="18:00" style="width:90px"/>
+              <span style="font-size:10px;color:var(--muted)">horário de Brasília</span>
+            </div>
+            <button class="mon-btn mon-btn-sec" onclick="testarResumo()" style="width:fit-content;font-size:10px">📋 Enviar resumo agora</button>
+          </div>
           <button class="mon-btn mon-btn-acc" onclick="salvarConfig()" style="width:fit-content">💾 Salvar configurações</button>
         </div>
 
@@ -1324,6 +1336,8 @@ async function loadMonitor(){
     setChk('mon-alerta-c',  d.alertar_compra);
     setChk('mon-alerta-v',  d.alertar_venda);
     setChk('mon-alerta-n',  d.alertar_neutro);
+    setVal('mon-hora-resumo', d.hora_resumo || '18:00');
+    setChk('mon-resumo-ativo', d.resumo_ativo !== false);
 
     // Tickers
     const ta = document.getElementById('mon-tickers');
@@ -1386,6 +1400,8 @@ async function salvarConfig(){
       alertar_compra: document.getElementById('mon-alerta-c').checked,
       alertar_venda:  document.getElementById('mon-alerta-v').checked,
       alertar_neutro: document.getElementById('mon-alerta-n').checked,
+      hora_resumo:    document.getElementById('mon-hora-resumo')?.value || '18:00',
+      resumo_ativo:   document.getElementById('mon-resumo-ativo')?.checked ?? true,
       tickers:        tickers,
     });
 
@@ -1406,6 +1422,17 @@ async function salvarConfig(){
     await loadMonitor();
   }catch(e){
     monLog('Erro ao salvar: ' + e.message);
+  }
+}
+
+async function testarResumo(){
+  monLog('⏳ Enviando resumo diário...');
+  try{
+    const r = await fetch('/monitor/resumo_agora');
+    const d = await r.json();
+    monLog(d.ok ? '✅ Resumo enviado! Verifique o Telegram.' : '❌ Falhou.');
+  }catch(e){
+    monLog('Erro: '+e.message);
   }
 }
 
