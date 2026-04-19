@@ -933,7 +933,20 @@ import time
 import json
 import os
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Fuso horário de Brasília (UTC-3, sem ajuste de horário de verão)
+TZ_BRASILIA = timezone(timedelta(hours=-3))
+
+def agora_br():
+    """Retorna datetime atual no horário de Brasília."""
+    return datetime.now(TZ_BRASILIA)
+
+def fmt_br(dt=None):
+    """Formata datetime no padrão brasileiro."""
+    if dt is None:
+        dt = agora_br()
+    return dt.strftime("%d/%m/%Y %H:%M")
 
 # ── Estado em memória (persiste enquanto o servidor estiver rodando) ──
 _STATE = {
@@ -950,7 +963,10 @@ _STATE = {
     "alertar_neutro":    False,
     "ultimo_scan":       "",
     "sinais_anteriores": {},
-    "sinais_datas":      {},   # {ticker: "dd/mm/yyyy HH:MM"} — data do início do sinal atual
+    "sinais_datas":      {},   # {ticker: "dd/mm/yyyy"} — data do início do sinal atual
+    "sinais_scores":     {},   # {ticker: score}
+    "hora_resumo":       "18:00",  # horário do resumo diário (Brasília)
+    "resumo_ativo":      True,     # envia resumo diário
 }
 
 def state_get():
@@ -992,19 +1008,75 @@ def tg_alerta(ticker, sinal, preco, var_pct, score, tendencia, estrategia, data_
     emoji   = "🟢" if sinal == "COMPRA" else "🔴" if sinal == "VENDA" else "⚪"
     var_str = f"+{var_pct:.2f}%" if var_pct >= 0 else f"{var_pct:.2f}%"
     sc_str  = f"+{score}" if score > 0 else str(score)
-    data_str = data_sinal or datetime.now().strftime("%d/%m/%Y %H:%M")
+    data_str = data_sinal or fmt_br()
     msg = (
         f"{emoji} <b>{ticker} — {sinal}</b>\n"
         f"💰 Preço: <b>R$ {preco:.2f}</b> ({var_str})\n"
         f"📊 Score: {sc_str} | Tendência: {tendencia}\n"
         f"🔧 Estratégia: {est_names.get(estrategia, str(estrategia))}\n"
         f"📅 Sinal desde: {data_str}\n"
-        f"🕐 Detectado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"🕐 Detectado: {fmt_br()}"
     )
     s = state_get()
     return tg_send(s["tg_token"], s["tg_chat_id"], msg)
 
 # ── Scanner do monitor ────────────────────────────────────────────
+
+def _buscar_data_inicio_sinal(ticker, sinal_atual, estrategia):
+    """
+    Varre os dados históricos recentes para encontrar
+    o candle mais antigo onde o sinal já era o mesmo que hoje.
+    Retorna a data formatada (dd/mm/yyyy).
+    """
+    try:
+        import yfinance as yf
+        sym = ticker.upper() + ".SA"
+        dd  = yf.download(sym, period="60d", interval="1d", progress=False, auto_adjust=True)
+        if dd.empty or len(dd) < 10:
+            return fmt_br()
+
+        closes  = dd["Close"].squeeze().dropna()
+        vol_d   = dd["Volume"].squeeze() if "Volume" in dd.columns else None
+        dw      = yf.download(sym, period="2y", interval="1wk", progress=False, auto_adjust=True)
+        closes_w = dw["Close"].squeeze().dropna() if not dw.empty else None
+
+        key_map = {1:"e1",2:"e2",3:"e3",4:"e4",5:"e5",6:"e6"}
+
+        # Varre de trás para frente para achar quando o sinal começou
+        data_inicio = closes.index[-1]
+        for i in range(len(closes)-1, max(len(closes)-30, 0)-1, -1):
+            janela = closes.iloc[:i+1]
+            if len(janela) < 30:
+                break
+            vol_jan = vol_d.iloc[:i+1] if vol_d is not None else None
+
+            if estrategia == 1:
+                sig = sinal_est1(janela)
+            elif estrategia == 2:
+                cw_ate = closes_w[closes_w.index <= closes.index[i]] if closes_w is not None else None
+                sig = sinal_est2(cw_ate) if cw_ate is not None and len(cw_ate) >= 30 else {"dec":"NEUTRO"}
+            elif estrategia == 3:
+                sig = sinal_est3(janela, vol_jan)
+            elif estrategia == 4:
+                cw_ate = closes_w[closes_w.index <= closes.index[i]] if closes_w is not None else None
+                sig = sinal_est4(cw_ate) if cw_ate is not None and len(cw_ate) >= 16 else {"dec":"NEUTRO"}
+            elif estrategia == 5:
+                sig = sinal_est5(janela)
+            else:
+                sig = sinal_est6(janela)
+
+            if sig.get("dec") != sinal_atual:
+                # Candle anterior já era diferente — o sinal começou no candle seguinte
+                if i + 1 < len(closes):
+                    data_inicio = closes.index[i+1]
+                break
+            data_inicio = closes.index[i]
+
+        return data_inicio.strftime("%d/%m/%Y")
+    except Exception as e:
+        print(f"[data_inicio_sinal] {ticker}: {e}")
+        return agora_br().strftime("%d/%m/%Y")
+
 
 def monitor_scan():
     s          = state_get()
@@ -1013,6 +1085,7 @@ def monitor_scan():
     anteriores = s.get("sinais_anteriores", {})
     novos      = dict(anteriores)
     datas_sinais = dict(s.get("sinais_datas", {}))
+    scores_sinais = dict(s.get("sinais_scores", {}))
     alertas    = []
 
     for ticker in tickers:
@@ -1028,35 +1101,134 @@ def monitor_scan():
             var_pct = res.get("var_pct", 0)
             tend    = res.get("tend", {}).get("label", "—")
 
+            # Atualiza score sempre
+            scores_sinais[ticker] = score
+            novos[ticker] = sinal
+
             sinal_ant = anteriores.get(ticker, "")
             if sinal != sinal_ant:
-                data_sinal = datetime.now().strftime("%d/%m/%Y %H:%M")
-                datas_sinais[ticker] = data_sinal
+                # Busca a data real de início do sinal nos dados históricos
+                data_inicio = _buscar_data_inicio_sinal(ticker, sinal, estrategia)
+                datas_sinais[ticker] = data_inicio
                 deve = (
                     (sinal == "COMPRA" and s.get("alertar_compra", True)) or
                     (sinal == "VENDA"  and s.get("alertar_venda",  True)) or
                     (sinal == "NEUTRO" and s.get("alertar_neutro", False))
                 )
                 if deve:
-                    ok = tg_alerta(ticker, sinal, preco, var_pct, score, tend, estrategia, data_sinal)
+                    ok = tg_alerta(ticker, sinal, preco, var_pct, score, tend, estrategia, data_inicio)
                     alertas.append({
                         "ticker": ticker, "sinal": sinal, "preco": preco,
                         "score": score, "tendencia": tend,
                         "ok": ok, "mudou_de": sinal_ant or "—",
-                        "data_sinal": data_sinal
+                        "data_sinal": data_inicio
                     })
-                novos[ticker] = sinal
         except Exception as e:
             print(f"[monitor_scan] {ticker}: {e}")
 
     _STATE["sinais_anteriores"] = novos
     _STATE["sinais_datas"]      = datas_sinais
-    _STATE["ultimo_scan"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    _STATE["sinais_scores"]     = scores_sinais
+    _STATE["ultimo_scan"] = fmt_br()
     return alertas
 
 # ── Scheduler ────────────────────────────────────────────────────
 
 _sched_running = False
+
+
+def enviar_resumo_diario():
+    """Envia resumo diário às 18h Brasília com todos os sinais e oscilações."""
+    s = state_get()
+    if not s.get("resumo_ativo", True):
+        return
+
+    tickers    = s.get("tickers", [])
+    estrategia = int(s.get("estrategia", 1))
+    key_map    = {1:"e1",2:"e2",3:"e3",4:"e4",5:"e5",6:"e6"}
+    est_key    = key_map.get(estrategia, "e1")
+    anteriores = s.get("sinais_anteriores", {})
+    datas      = s.get("sinais_datas", {})
+    scores     = s.get("sinais_scores", {})
+
+    linhas = []
+    for ticker in tickers:
+        try:
+            res = analisar_ticker(ticker)
+            if not res:
+                continue
+            sig_obj  = res.get(est_key, {})
+            sinal    = sig_obj.get("dec", "NEUTRO")
+            score    = sig_obj.get("score", 0)
+            preco    = res.get("preco", 0)
+            var_pct  = res.get("var_pct", 0)
+            tend     = res.get("tend", {}).get("label", "—")
+            sinal_ant = anteriores.get(ticker, "")
+
+            # Calcula dias no sinal atual
+            data_ini = datas.get(ticker, "")
+            dias_str = ""
+            if data_ini:
+                try:
+                    dt_ini = datetime.strptime(data_ini, "%d/%m/%Y")
+                    dias   = (agora_br().replace(tzinfo=None) - dt_ini).days
+                    dias_str = f"{dias}d"
+                except Exception:
+                    dias_str = ""
+
+            emoji   = "🟢" if sinal == "COMPRA" else "🔴" if sinal == "VENDA" else "⚪"
+            var_str = f"+{var_pct:.2f}%" if var_pct >= 0 else f"{var_pct:.2f}%"
+            sc_str  = f"+{score}" if score > 0 else str(score)
+            mud_str = "↕ mudou" if sinal != sinal_ant and sinal_ant else "= mesmo"
+
+            linha = (
+                f"{emoji} <b>{ticker}</b> {sinal}
+"
+                f"   R$ {preco:.2f} {var_str} | score {sc_str} | {dias_str} | {mud_str}"
+            )
+            linhas.append(linha)
+
+            # Atualiza estado
+            s["sinais_anteriores"][ticker] = sinal
+            s["sinais_scores"][ticker]     = score
+
+        except Exception as e:
+            print(f"[resumo] {ticker}: {e}")
+
+    # Busca Ibovespa
+    ibov_str = ""
+    try:
+        import yfinance as yf
+        ibov = yf.download("^BVSP", period="2d", interval="1d", progress=False, auto_adjust=True)
+        if not ibov.empty and len(ibov) >= 2:
+            ult  = float(ibov["Close"].iloc[-1])
+            ant  = float(ibov["Close"].iloc[-2])
+            var  = (ult - ant) / ant * 100
+            vs   = f"+{var:.2f}%" if var >= 0 else f"{var:.2f}%"
+            ibov_str = f"
+📈 <b>Ibovespa:</b> {ult:,.0f} pts  {vs}"
+    except Exception:
+        pass
+
+    agora = agora_br()
+    dias_semana = ["segunda","terça","quarta","quinta","sexta","sábado","domingo"]
+    dia_nome    = dias_semana[agora.weekday()]
+
+    msg = (
+        f"📊 <b>RESUMO DIÁRIO — {agora.strftime('%d/%m/%Y')} ({dia_nome})</b>
+
+"
+        + "
+
+".join(linhas)
+        + ibov_str
+        + f"
+
+🕐 Fechamento: {agora.strftime('%d/%m/%Y %H:%M')} (Brasília)"
+    )
+
+    tg_send(s["tg_token"], s["tg_chat_id"], msg)
+    print(f"[Resumo] Enviado às {fmt_br()}")
 
 def _sched_loop():
     global _sched_running
@@ -1066,12 +1238,16 @@ def _sched_loop():
         if not s.get("ativo", False):
             time.sleep(60)
             continue
-        agora = datetime.now()
+        agora = agora_br()
         try:
-            h_ini = datetime.strptime(s["hora_inicio"], "%H:%M").replace(
-                year=agora.year, month=agora.month, day=agora.day)
-            h_fim = datetime.strptime(s["hora_fim"], "%H:%M").replace(
-                year=agora.year, month=agora.month, day=agora.day)
+            h_ini = agora.replace(
+                hour=int(s["hora_inicio"].split(":")[0]),
+                minute=int(s["hora_inicio"].split(":")[1]),
+                second=0, microsecond=0)
+            h_fim = agora.replace(
+                hour=int(s["hora_fim"].split(":")[0]),
+                minute=int(s["hora_fim"].split(":")[1]),
+                second=0, microsecond=0)
         except Exception:
             time.sleep(60)
             continue
@@ -1083,6 +1259,26 @@ def _sched_loop():
                     print(f"[Scheduler] {len(alertas)} alerta(s) enviado(s).")
             except Exception as e:
                 print(f"[Scheduler] Erro: {e}")
+
+        # Verifica se é hora do resumo diário (seg-sex, exatamente às hora_resumo)
+        try:
+            hora_resumo = s.get("hora_resumo", "18:00")
+            h_res = agora.replace(
+                hour=int(hora_resumo.split(":")[0]),
+                minute=int(hora_resumo.split(":")[1]),
+                second=0, microsecond=0)
+            intervalo_min = int(s.get("intervalo", 30))
+            # Dispara se estamos dentro da janela de 1 intervalo após o horário do resumo
+            diff = (agora - h_res).total_seconds()
+            ultimo_resumo = _STATE.get("_ultimo_resumo_data", "")
+            hoje_str = agora.strftime("%d/%m/%Y")
+            if agora.weekday() < 5 and 0 <= diff < intervalo_min * 60 and ultimo_resumo != hoje_str:
+                _STATE["_ultimo_resumo_data"] = hoje_str
+                print(f"[Scheduler] Enviando resumo diário...")
+                enviar_resumo_diario()
+        except Exception as e:
+            print(f"[Scheduler] Erro resumo: {e}")
+
         time.sleep(int(s.get("intervalo", 30)) * 60)
     print("[Scheduler] Parado.")
 
@@ -1117,6 +1313,8 @@ def monitor_status():
         "alertar_venda":  s["alertar_venda"],
         "alertar_neutro": s["alertar_neutro"],
         "scheduler_on":   _sched_running,
+        "hora_resumo":    s.get("hora_resumo", "18:00"),
+        "resumo_ativo":   s.get("resumo_ativo", True),
     })
 
 @app.route("/monitor/salvar")
@@ -1147,6 +1345,10 @@ def monitor_salvar():
         s["alertar_venda"] = request.args.get("alertar_venda") == "true"
     if request.args.get("alertar_neutro") is not None:
         s["alertar_neutro"] = request.args.get("alertar_neutro") == "true"
+    if request.args.get("hora_resumo"):
+        s["hora_resumo"] = request.args.get("hora_resumo")
+    if request.args.get("resumo_ativo") is not None:
+        s["resumo_ativo"] = request.args.get("resumo_ativo") == "true"
 
     # Tickers
     tickers_raw = request.args.get("tickers", "")
@@ -1173,7 +1375,7 @@ def monitor_testar_telegram():
     ok = tg_send(token, chat_id,
         "🤖 <b>Robô B3 conectado!</b>\n"
         "Você receberá alertas de compra e venda aqui.\n"
-        f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"⏰ {fmt_br()}"
     )
     return jsonify({
         "ok":  ok,
@@ -1185,6 +1387,12 @@ def monitor_scan_agora():
     alertas = monitor_scan()
     s = state_get()
     return jsonify({"ok": True, "alertas": alertas, "total": len(alertas), "ultimo_scan": s["ultimo_scan"]})
+
+@app.route("/monitor/resumo_agora")
+def monitor_resumo_agora():
+    """Envia o resumo diário manualmente."""
+    enviar_resumo_diario()
+    return jsonify({"ok": True, "msg": "Resumo enviado!"})
 
 @app.route("/monitor/toggle_ativo")
 def monitor_toggle_ativo():
