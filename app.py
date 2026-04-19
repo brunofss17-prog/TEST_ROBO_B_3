@@ -1182,8 +1182,7 @@ def enviar_resumo_diario():
             mud_str = "↕ mudou" if sinal != sinal_ant and sinal_ant else "= mesmo"
 
             linha = (
-                f"{emoji} <b>{ticker}</b> {sinal}
-"
+                f"{emoji} <b>{ticker}</b> {sinal}"
                 f"   R$ {preco:.2f} {var_str} | score {sc_str} | {dias_str} | {mud_str}"
             )
             linhas.append(linha)
