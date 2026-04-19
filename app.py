@@ -1182,7 +1182,7 @@ def enviar_resumo_diario():
             mud_str = "↕ mudou" if sinal != sinal_ant and sinal_ant else "= mesmo"
 
             linha = (
-                f"{emoji} <b>{ticker}</b> {sinal}"
+                f"{emoji} <b>{ticker}</b> {sinal}\n"
                 f"   R$ {preco:.2f} {var_str} | score {sc_str} | {dias_str} | {mud_str}"
             )
             linhas.append(linha)
@@ -1204,8 +1204,7 @@ def enviar_resumo_diario():
             ant  = float(ibov["Close"].iloc[-2])
             var  = (ult - ant) / ant * 100
             vs   = f"+{var:.2f}%" if var >= 0 else f"{var:.2f}%"
-            ibov_str = f"
-📈 <b>Ibovespa:</b> {ult:,.0f} pts  {vs}"
+            ibov_str = f"\n📈 <b>Ibovespa:</b> {ult:,.0f} pts  {vs}"
     except Exception:
         pass
 
@@ -1214,16 +1213,10 @@ def enviar_resumo_diario():
     dia_nome    = dias_semana[agora.weekday()]
 
     msg = (
-        f"📊 <b>RESUMO DIÁRIO — {agora.strftime('%d/%m/%Y')} ({dia_nome})</b>
-
-"
-        + "
-
-".join(linhas)
+        f"📊 <b>RESUMO DIÁRIO — {agora.strftime('%d/%m/%Y')} ({dia_nome})</b>\n\n"
+        + "\n\n".join(linhas)
         + ibov_str
-        + f"
-
-🕐 Fechamento: {agora.strftime('%d/%m/%Y %H:%M')} (Brasília)"
+        + f"\n\n🕐 Fechamento: {agora.strftime('%d/%m/%Y %H:%M')} (Brasília)"
     )
 
     tg_send(s["tg_token"], s["tg_chat_id"], msg)
