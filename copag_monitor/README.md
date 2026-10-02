@@ -13,7 +13,16 @@ coleção e checa o estoque de cada SKU.
   (ou continua, com `--continuar`).
 - 👀 **Pré-lançamento**: produto da coleção apareceu no site, ainda sem estoque.
 
-## Uso
+## Rodando no VS Code (Windows)
+1. Instale o Python em https://www.python.org/downloads/ (marque **"Add python.exe to PATH"**).
+2. Salve `copag_monitor.py` numa pasta e abra essa pasta no VS Code.
+3. Abra o terminal (**Ctrl + '**) e rode:
+   ```
+   python copag_monitor.py
+   ```
+4. Deixe o PC ligado (sem hibernar). Quando liberar a venda: bipe, janela de aviso
+   na tela e o produto abre sozinho no navegador.
+
 Requer só Python 3.8+ (sem dependências).
 
 ```bash

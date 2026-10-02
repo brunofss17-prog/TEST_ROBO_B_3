@@ -40,12 +40,15 @@ import json
 import os
 import random
 import re
+import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from datetime import datetime, timedelta, timezone
 
 BASE_URL = os.environ.get("COPAG_BASE_URL", "https://www.copagloja.com.br").rstrip("/")
@@ -246,7 +249,39 @@ def enviar_discord(texto):
         return False
 
 
-def alertar(titulo, produtos, bipe=True):
+def tocar_som():
+    if sys.platform == "win32":
+        import winsound  # o "\a" não toca no terminal do VS Code
+        for _ in range(5):
+            winsound.Beep(1200, 400)
+            time.sleep(0.15)
+    else:
+        for _ in range(5):
+            sys.stdout.write("\a")
+            sys.stdout.flush()
+            time.sleep(0.3)
+
+
+def popup(titulo, texto):
+    """Janela de aviso na tela (não bloqueia o robô)."""
+    def _mostrar():
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                # 0x40 = ícone de informação, 0x1000 = sempre por cima
+                ctypes.windll.user32.MessageBoxW(0, texto, titulo, 0x40 | 0x1000)
+            elif sys.platform == "darwin":
+                subprocess.run(["osascript", "-e",
+                                f'display notification {json.dumps(texto[:200])} '
+                                f'with title {json.dumps(titulo)}'], check=False)
+            else:
+                subprocess.run(["notify-send", titulo, texto[:300]], check=False)
+        except Exception:
+            pass
+    threading.Thread(target=_mostrar, daemon=True).start()
+
+
+def alertar(titulo, produtos, bipe=True, abrir_navegador=False):
     linhas = [titulo, ""]
     for p in produtos:
         preco = f"R$ {p['preco']:.2f}".replace(".", ",") if p.get("preco") else "—"
@@ -257,11 +292,13 @@ def alertar(titulo, produtos, bipe=True):
     print("\n" + "=" * 70)
     print(texto)
     print("=" * 70 + "\n", flush=True)
+    popup(titulo, texto)
+    if abrir_navegador:
+        for p in produtos[:3]:
+            if p.get("link"):
+                webbrowser.open(p["link"])
     if bipe:
-        for _ in range(5):
-            sys.stdout.write("\a")
-            sys.stdout.flush()
-            time.sleep(0.3)
+        tocar_som()
     enviar_telegram(texto)
     enviar_discord(texto)
 
@@ -354,7 +391,7 @@ def main():
 
             if liberados:
                 alertar("🚨 VENDA LIBERADA! Pokémon TCG 30 anos disponível na Copag Loja!",
-                        liberados)
+                        liberados, abrir_navegador=True)
                 if not args.continuar:
                     log("Objetivo atingido. Encerrando (use --continuar para seguir).")
                     return
