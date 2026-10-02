@@ -50,13 +50,15 @@ from datetime import datetime, timedelta, timezone
 
 BASE_URL = os.environ.get("COPAG_BASE_URL", "https://www.copagloja.com.br").rstrip("/")
 
-# Termos pesquisados na busca da loja (ft = full text).
+# Termos pesquisados na busca da loja (ft = full text). A busca da VTEX é
+# fraca com frases, então buscamos o catálogo Pokémon inteiro e filtramos
+# localmente; os demais termos são uma rede de segurança.
 TERMOS_BUSCA = [
-    "30 anos",
-    "celebracao 30 anos",
+    "pokemon",
+    "pokémon",
+    "pikachu",
     "celebração",
-    "30th celebration",
-    "pokemon 30",
+    "30 anos",
 ]
 
 # Um produto é da coleção se o texto (nome/descrição/categorias) bater com
@@ -114,17 +116,25 @@ def http_get_json(url, timeout=20):
 #  Catálogo VTEX
 # ─────────────────────────────────────────────────────────────────
 
-def buscar_produtos(termo, por_pagina=50):
-    """Busca produtos na API pública de catálogo VTEX."""
-    qs = urllib.parse.urlencode({
-        "ft": termo,
-        "_from": 0,
-        "_to": por_pagina - 1,
-        "_": int(time.time()),  # evita cache de CDN
-    })
-    url = f"{BASE_URL}/api/catalog_system/pub/products/search?{qs}"
-    dados = http_get_json(url)
-    return dados if isinstance(dados, list) else []
+def buscar_produtos(termo, por_pagina=50, max_paginas=5):
+    """Busca produtos na API pública de catálogo VTEX (paginando)."""
+    produtos = []
+    for pagina in range(max_paginas):
+        # quote_via=quote: a VTEX rejeita (HTTP 400) espaço codificado como "+".
+        qs = urllib.parse.urlencode({
+            "ft": termo,
+            "_from": pagina * por_pagina,
+            "_to": (pagina + 1) * por_pagina - 1,
+            "_": int(time.time()),  # evita cache de CDN
+        }, quote_via=urllib.parse.quote)
+        url = f"{BASE_URL}/api/catalog_system/pub/products/search?{qs}"
+        dados = http_get_json(url)
+        if not isinstance(dados, list) or not dados:
+            break
+        produtos.extend(dados)
+        if len(dados) < por_pagina:
+            break
+    return produtos
 
 
 def eh_da_colecao(produto):
@@ -175,10 +185,13 @@ def resumir_produto(produto):
 def verificar():
     """Retorna {id: resumo} dos produtos da coleção encontrados agora."""
     encontrados = {}
+    total_pokemon = set()
     erros = 0
     for termo in TERMOS_BUSCA:
         try:
             for p in buscar_produtos(termo):
+                if re.search(PADRAO_POKEMON, normalizar(p.get("productName", ""))):
+                    total_pokemon.add(p.get("productId"))
                 if eh_da_colecao(p):
                     r = resumir_produto(p)
                     if r["id"]:
@@ -190,7 +203,9 @@ def verificar():
         time.sleep(random.uniform(0.5, 1.5))  # gentil com o servidor
     if erros == len(TERMOS_BUSCA):
         raise RuntimeError("todas as buscas falharam")
-    return encontrados
+    if not total_pokemon:
+        log("⚠  Nenhum produto Pokémon retornado — a busca da loja pode ter mudado.")
+    return encontrados, len(total_pokemon)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -322,14 +337,14 @@ def main():
     falhas_seguidas = 0
     while True:
         try:
-            encontrados = verificar()
+            encontrados, n_pokemon = verificar()
             falhas_seguidas = 0
             novos, liberados = processar(estado, encontrados)
             salvar_estado(args.estado, estado)
 
             a_venda = [p for p in encontrados.values() if p["disponivel"]]
-            log(f"{len(encontrados)} produto(s) da coleção no site, "
-                f"{len(a_venda)} à venda.")
+            log(f"{n_pokemon} produto(s) Pokémon no catálogo | "
+                f"{len(encontrados)} da coleção 30 anos | {len(a_venda)} à venda.")
 
             novos_indisp = [p for p in novos if not p["disponivel"]]
             if novos_indisp:
