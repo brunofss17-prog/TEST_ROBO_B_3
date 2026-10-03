@@ -2,12 +2,14 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// Opcional: limitar a certos grupos/contatos (nomes separados por vírgula).
-// Ex.: CHATS="Grupo da Família,Futebol de Quinta"
-const CHATS_PERMITIDOS = (process.env.CHATS || '')
+// Grupos/contatos onde o robô vota (nomes separados por vírgula).
+// Pode trocar via variável de ambiente: CHATS="Outro Grupo,Mais Um" npm start
+// Use CHATS="*" para votar em qualquer conversa.
+const CHATS_PADRAO = 'Loja Pokebola - Grupo VIP';
+const CHATS_PERMITIDOS = (process.env.CHATS || CHATS_PADRAO)
     .split(',')
     .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+    .filter((s) => s && s !== '*');
 
 const client = new Client({
     // Guarda a sessão em .wwebjs_auth para não precisar ler o QR toda vez

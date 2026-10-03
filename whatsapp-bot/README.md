@@ -19,7 +19,7 @@ O computador precisa ficar ligado com o robô rodando.
 
 ## Opções
 
-- **Só em alguns grupos:** passe os nomes dos chats separados por vírgula:
+- **Grupo:** por padrão o robô só vota no grupo **Loja Pokebola - Grupo VIP**. Para trocar, passe os nomes separados por vírgula (ou `CHATS="*"` para qualquer conversa):
   ```bash
   CHATS="Futebol de Quinta,Grupo da Família" npm start
   ```
