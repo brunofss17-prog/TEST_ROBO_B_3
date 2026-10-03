@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-enquete-bot",
+  "version": "1.0.0",
+  "description": "Robô que vota automaticamente na primeira opção de enquetes do WhatsApp",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.7"
+  }
+}
