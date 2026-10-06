@@ -1,15 +1,18 @@
 // ==UserScript==
 // @name         Pokeidle - Auto clique
 // @namespace    test-robo-b-3
-// @version      1.0
+// @version      1.1
 // @description  Clica automaticamente num item da tela (ex.: lista "Proximidade para capturar").
-// @match        https://pokeidle.io/app*
+// @match        *://pokeidle.io/*
+// @match        *://*.pokeidle.io/*
+// @noframes
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   'use strict';
+  console.log('[auto clique] script carregado');
 
   const CFG_KEY = 'pkidle-autoclick';
   const cfg = Object.assign(
@@ -81,7 +84,7 @@
 
   // ---------- painel ----------
   const ui = document.createElement('div');
-  ui.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:999999;background:#222;color:#fff;' +
+  ui.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:2147483647;background:#222;color:#fff;' +
     'font:12px sans-serif;padding:8px;border-radius:6px;box-shadow:0 2px 8px #000a;display:flex;' +
     'flex-direction:column;gap:4px;min-width:180px';
   ui.innerHTML = `
@@ -91,7 +94,13 @@
     <button data-a="reset">↺ Alvo padrão (Proximidade)</button>
     <label>Intervalo (ms) <input data-a="ms" type="number" min="200" step="100" style="width:70px"></label>
     <small data-a="status" style="opacity:.8"></small>`;
-  document.body.appendChild(ui);
+  // O jogo pode recriar o <body>/<html>; re-anexa o painel se ele sumir.
+  const attach = () => {
+    const host = document.body || document.documentElement;
+    if (host && !host.contains(ui)) host.appendChild(ui);
+  };
+  attach();
+  setInterval(attach, 1000);
 
   const $ = a => ui.querySelector(`[data-a="${a}"]`);
   const status = t => ($('status').textContent = t);
