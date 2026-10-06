@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pokeidle - Auto clique
 // @namespace    test-robo-b-3
-// @version      1.1
+// @version      1.2
 // @description  Clica automaticamente num item da tela (ex.: lista "Proximidade para capturar").
 // @match        *://pokeidle.io/*
 // @match        *://*.pokeidle.io/*
@@ -13,6 +13,7 @@
 (function () {
   'use strict';
   console.log('[auto clique] script carregado');
+  try {
 
   const CFG_KEY = 'pkidle-autoclick';
   const cfg = Object.assign(
@@ -87,13 +88,23 @@
   ui.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:2147483647;background:#222;color:#fff;' +
     'font:12px sans-serif;padding:8px;border-radius:6px;box-shadow:0 2px 8px #000a;display:flex;' +
     'flex-direction:column;gap:4px;min-width:180px';
-  ui.innerHTML = `
-    <b>Auto clique</b>
-    <button data-a="toggle">▶ Iniciar</button>
-    <button data-a="pick">🎯 Escolher alvo</button>
-    <button data-a="reset">↺ Alvo padrão (Proximidade)</button>
-    <label>Intervalo (ms) <input data-a="ms" type="number" min="200" step="100" style="width:70px"></label>
-    <small data-a="status" style="opacity:.8"></small>`;
+  // Monta o painel sem innerHTML (sites com Trusted Types/CSP bloqueiam innerHTML).
+  const mk = (tag, attrs, text) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (text) e.textContent = text;
+    return e;
+  };
+  const msLabel = mk('label', {}, 'Intervalo (ms) ');
+  msLabel.appendChild(mk('input', { 'data-a': 'ms', type: 'number', min: '200', step: '100', style: 'width:70px' }));
+  ui.append(
+    mk('b', {}, 'Auto clique'),
+    mk('button', { 'data-a': 'toggle' }, '▶ Iniciar'),
+    mk('button', { 'data-a': 'pick' }, '🎯 Escolher alvo'),
+    mk('button', { 'data-a': 'reset' }, '↺ Alvo padrão (Proximidade)'),
+    msLabel,
+    mk('small', { 'data-a': 'status', style: 'opacity:.8' })
+  );
   // O jogo pode recriar o <body>/<html>; re-anexa o painel se ele sumir.
   const attach = () => {
     const host = document.body || document.documentElement;
@@ -138,4 +149,8 @@
     flash(e.target);
     status('alvo salvo');
   }, true);
+  } catch (err) {
+    console.error('[auto clique] erro:', err);
+    alert('[auto clique] erro: ' + err.message);
+  }
 })();
